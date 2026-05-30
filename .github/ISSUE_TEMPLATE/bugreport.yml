@@ -1,0 +1,42 @@
+name: Bug Report
+description: File a report to help us improve BlitCoder!
+body:
+  - type: markdown
+    attributes:
+      value: "Detail the bug you are experiencing"
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What version of BlitCoder are you using?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      placeholder: 1. Go to...
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Additional Context
+      placeholder: Any other information that may be helpful
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe would you say this bug is?
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+  - type: checkbox
+    id: warning
+    attributes:
+      label: Warning
+      description: By reporting this bug, you agree to our standards and publicly admit to the bug.
+      options:
+        - I Understand

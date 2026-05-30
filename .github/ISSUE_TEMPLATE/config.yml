@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question
+    about: Ask questions here.
+  - name: Security
+    about: Report security vulnerabilities here.
+  - name: Bug
+    about: Report bugs here.
+  - name: Feature
+    about: Describe a feature you want to be added.

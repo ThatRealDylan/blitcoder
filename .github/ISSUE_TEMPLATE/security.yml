@@ -1,0 +1,6 @@
+name: Vulnerability Report
+description: File a report to help us improve the security of BlitCoder!
+body:
+  - type: markdown
+    attributes:
+      value: "Detail the vulnerability you are experiencing"

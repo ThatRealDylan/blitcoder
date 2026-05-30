@@ -1,0 +1,27 @@
+name: Feature Request
+description: Suggest a new feature for BlitCoder!
+body:
+  - type: markdown
+    attributes:
+      value: "Detail the feature you are requesting"
+  - type: input
+    id: feature
+    attributes:
+      label: Feature Name
+      placeholder: "What is the name of the feature?"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      placeholder: "Describe the feature you are requesting"
+    validations:
+      required: true
+  - type: checkbox
+    id: warning
+    attributes:
+      label: Warning
+      description: By suggesting this feature, you agree to our standards and publicly admit to the feature request, you also agree to respect our decision of wether or not to implement the feature.
+      options:
+        - I Understand
