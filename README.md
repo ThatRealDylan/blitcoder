@@ -32,7 +32,7 @@
 
 ```bash
 # Clone & install
-git clone https://github.com/ThatRealDylan/blited.git
+git clone https://github.com/ThatRealDylan/blitcoder.git
 cd blitCoder
 bun install
 
@@ -46,10 +46,10 @@ bun run index.ts
 
 | Resource | Description |
 |----------|-------------|
-| [`MEGADOC.md`](./MEGADOC.md) | Complete documentation covering architecture, usage, SDK, API, and deployment |
-| [`docs/plugins.md`](./docs/plugins.md) | Plugin SDK reference (hooks, commands, config) |
-| [`docs/code.md`](./docs/code.md) | Codebase architecture overview |
-| [`docs/how-to-use.md`](./docs/how-to-use.md) | Quick usage guide and command reference |
+| [`MEGADOC.md`](https://github.com/ThatRealDylan/blitcoder/blob/main/docs/MEGADOC.md) | Complete documentation covering architecture, usage, SDK, API, and deployment |
+| [`docs/plugins.md`](https://github.com/ThatRealDylan/blitcoder/blob/main/docs/plugins.md) | Plugin SDK reference (hooks, commands, config) |
+| [`docs/code.md`](https://github.com/ThatRealDylan/blitcoder/blob/main/docs/code.md) | Codebase architecture overview |
+| [`docs/how-to-use.md`](https://github.com/ThatRealDylan/blitcoder/blob/main/docs/MEGADOC.md) | Quick usage guide and command reference |
 
 ---
 
