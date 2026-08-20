@@ -30,8 +30,12 @@ export async function checkForUpdates(): Promise<UpdateInfo | null> {
     if (!latestVersion) return null;
 
     // Basic semver compare
-    const currentParts = currentVersion.split('.').map(Number);
-    const latestParts = latestVersion.split('.').map(Number);
+    const parsePart = (part: string) => {
+      const num = parseInt(part.replace(/[^0-9].*$/, ''), 10);
+      return Number.isNaN(num) ? 0 : num;
+    };
+    const currentParts = currentVersion.split('.').map(parsePart);
+    const latestParts = latestVersion.split('.').map(parsePart);
 
     let hasUpdate = false;
     for (let i = 0; i < Math.max(currentParts.length, latestParts.length); i++) {

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import path from "path";
+import { GLOBAL_DIR } from "./paths";
 
 export type ModelType = "DeepSeek" | "GPT-OSS" | "Local Model" | string;
 
@@ -58,9 +59,16 @@ export class AIClient {
 }
 
 export function getSystemPrompt(): string {
-  try {
-    return readFileSync(path.join(process.cwd(), ".blitcoder", "system_prompt.txt"), "utf-8");
-  } catch (e) {
-    return "You are a helpful coding assistant.";
+  const globalPrompt = path.join(GLOBAL_DIR, "system_prompt.txt");
+  const localPrompt = path.join(process.cwd(), ".blitcoder", "system_prompt.txt");
+
+  for (const promptPath of [globalPrompt, localPrompt]) {
+    try {
+      if (existsSync(promptPath)) {
+        return readFileSync(promptPath, "utf-8");
+      }
+    } catch (e) { /* try next */ }
   }
+
+  return "You are a helpful coding assistant.";
 }

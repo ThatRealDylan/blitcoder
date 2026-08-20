@@ -4,6 +4,7 @@ import TextInput from 'ink-text-input';
 import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
+import { getPluginInstallDir, extractZipArchive } from './paths';
 
 export const PluginCreateMenu = ({ onExit }: { onExit: () => void }) => {
   const [step, setStep] = useState(0);
@@ -67,9 +68,9 @@ export const PluginCreateMenu = ({ onExit }: { onExit: () => void }) => {
             description: pluginData.description,
             author: pluginData.author,
             license: pluginData.license,
-            "file-modifications-folder": "/mods",
-            "scripts-folder": "/scripts",
-            "data-folder": "/data"
+            "file-modifications-folder": "mods",
+            "scripts-folder": "scripts",
+            "data-folder": "data"
           },
           "!@metadata",
           {
@@ -157,10 +158,7 @@ export const PluginImportMenu = ({ onExit }: { onExit: () => void }) => {
         }
       } catch (e) {}
 
-      let targetDir = path.join(process.cwd(), '.blitcoder', 'plugins');
-      if (installLoc === "User folder") {
-        targetDir = path.join(os.homedir(), '.blitcoder', 'plugins');
-      }
+      let targetDir = getPluginInstallDir();
       
       const pluginName = path.basename(sourcePath);
       const destPath = path.join(targetDir, pluginName);
@@ -261,10 +259,17 @@ export const PluginFeaturedMenu = ({ onExit }: { onExit: () => void }) => {
       const res = await fetch(`${baseUrl}${plugin.url}`);
       if (!res.ok) throw new Error(`Download failed (${res.status})`);
       const zipBuf = await res.arrayBuffer();
-      const pluginDir = path.join(os.homedir(), '.blitcoder', 'plugins', plugin.id);
-      fs.ensureDirSync(pluginDir);
-      const zipPath = path.join(os.homedir(), '.blitcoder', 'plugins', `${plugin.id}.zip`);
+
+      const pluginsRoot = getPluginInstallDir();
+      fs.ensureDirSync(pluginsRoot);
+      const pluginDir = path.join(pluginsRoot, plugin.id);
+      const zipPath = path.join(pluginsRoot, `${plugin.id}.zip`);
+
       fs.writeFileSync(zipPath, Buffer.from(zipBuf));
+      fs.ensureDirSync(pluginDir);
+      await extractZipArchive(zipPath, pluginDir);
+      fs.removeSync(zipPath);
+
       setStatus('installed');
       setInstalling(false);
     } catch (e: any) {

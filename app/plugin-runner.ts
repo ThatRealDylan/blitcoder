@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { getPluginInstallDir } from './paths';
 
 import { PluginHookManager, createSDK } from './plugin-hooks';
 
@@ -50,15 +50,14 @@ export interface ScriptRunResult {
  */
 function getPluginDirs(): string[] {
   const dirs: string[] = [];
+  const primary = getPluginInstallDir();
+  if (fs.existsSync(primary)) dirs.push(primary);
 
-  // Local install: <cwd>/.blitcoder/plugins
   const localPlugins = path.join(process.cwd(), '.blitcoder', 'plugins');
-  if (fs.existsSync(localPlugins)) dirs.push(localPlugins);
-
-  // User install: ~/.blitcoder/plugins
   const globalPlugins = path.join(os.homedir(), '.blitcoder', 'plugins');
-  if (fs.existsSync(globalPlugins) && globalPlugins !== localPlugins) {
-    dirs.push(globalPlugins);
+
+  for (const dir of [localPlugins, globalPlugins]) {
+    if (dir !== primary && fs.existsSync(dir)) dirs.push(dir);
   }
 
   return dirs;
