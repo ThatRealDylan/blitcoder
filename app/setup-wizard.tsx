@@ -5,12 +5,12 @@ import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
 import { spawn } from 'child_process';
-import { SETTINGS_PATH } from './paths';
+import { SETTINGS_PATH, extractZipArchive } from './paths';
 
 type StepType = 'welcome' | 'ollama' | 'workspaces' | 'ai-provider' | 'extra-settings' | 'installation';
 
 interface SetupData {
-  ollama: 'system' | 'minimal' | null;
+  ollama: 'existing' | 'minimal' | null;
   workspace: 'unsandboxed' | 'sandboxed' | null;
   aiProvider: 'openai' | 'gemini' | 'deepseek' | 'qwen' | 'ollama' | 'skip' | null;
   apiKey: string;
@@ -118,9 +118,9 @@ const WelcomeStep = ({ onNext }: { onNext: (mode: 'now' | 'later') => void }) =>
 };
 
 const OllamaStep = ({ data, updateData, onNext }: StepComponentProps) => {
-  const [cursor, setCursor] = useState(data.ollama === 'system' ? 0 : data.ollama === 'minimal' ? 1 : 0);
+  const [cursor, setCursor] = useState(data.ollama === 'existing' ? 0 : data.ollama === 'minimal' ? 1 : 0);
   const options = [
-    { key: 'system' as const, label: 'System' },
+    { key: 'existing' as const, label: 'System' },
     { key: 'minimal' as const, label: 'Minimal' },
   ];
 
@@ -247,6 +247,7 @@ const ExtraSettingsStep = ({ data, updateData, onNext }: StepComponentProps) => 
   const [modelInput, setModelInput] = useState(data.defaultModel || '');
   const [truncCursor, setTruncCursor] = useState(0);
   const [waitingForPrompt, setWaitingForPrompt] = useState(false);
+  const [cursor, setCursor] = useState(0);
 
   useInput((_input, key) => {
     if (waitingForPrompt) {
@@ -286,6 +287,8 @@ const ExtraSettingsStep = ({ data, updateData, onNext }: StepComponentProps) => 
     }
 
     if (subStep === 2) {
+      if (key.upArrow) setCursor(Math.max(0, cursor - 1));
+      if (key.downArrow) setCursor(Math.min(1, cursor + 1));
       if (key.return) {
         if (cursor === 0) {
           const sysPromptPath = path.join(os.homedir(), 'blitcodersysprompt.txt');
@@ -301,8 +304,6 @@ const ExtraSettingsStep = ({ data, updateData, onNext }: StepComponentProps) => 
       }
     }
   });
-
-  const [cursor, setCursor] = useState(0);
 
   if (waitingForPrompt) {
     return (
@@ -356,6 +357,7 @@ const InstallationStep = (props: StepComponentProps) => {
   const [phase, setPhase] = useState<'loading' | 'selecting' | 'installing' | 'done'>('loading');
   const [cursor, setCursor] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [installStarted, setInstallStarted] = useState(false);
 
   useEffect(() => {
     if (phase === 'loading') {
@@ -378,6 +380,48 @@ const InstallationStep = (props: StepComponentProps) => {
         });
     }
   }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'installing' || installStarted) return;
+    setInstallStarted(true);
+
+    const runInstall = async () => {
+      const sel = releases[data.selectedReleaseIndex];
+      if (!sel) return;
+      const destDir = path.join(data.installLocation, '.blitcoder');
+      fs.ensureDirSync(destDir);
+      setInstallStatus(`Downloading ${sel.tag_name}...`);
+
+      try {
+        const response = await fetch(sel.zipball_url);
+        if (!response.body) throw new Error('No response body');
+        const reader = response.body.getReader();
+        const cl = parseInt(response.headers.get('content-length') || '0', 10);
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (cl > 0) setInstallProgress(Math.round((received / cl) * 100));
+        }
+        const zipPath = path.join(destDir, 'blitcoder.zip');
+        fs.writeFileSync(zipPath, Buffer.concat(chunks));
+        setInstallStatus('Extracting...');
+        const extractDir = path.join(destDir, 'release');
+        await extractZipArchive(zipPath, extractDir);
+        fs.removeSync(zipPath);
+        setInstallProgress(100);
+        setInstallStatus(`${sel.tag_name} installed!`);
+        setPhase('done');
+      } catch (e: any) {
+        setInstallStatus(`Failed: ${e.message}`);
+        setError(e.message);
+      }
+    };
+    runInstall();
+  }, [phase, installStarted, data.selectedReleaseIndex, data.installLocation, releases, setInstallProgress, setInstallStatus]);
 
   const allReleases = [...releases.filter(r => !r.prerelease), ...releases.filter(r => r.prerelease)];
 
@@ -422,49 +466,6 @@ const InstallationStep = (props: StepComponentProps) => {
   }
 
   if (phase === 'installing') {
-    useEffect(() => {
-      const runInstall = async () => {
-        const sel = releases[data.selectedReleaseIndex];
-        if (!sel) return;
-        const destDir = path.join(data.installLocation, '.blitcoder');
-        fs.ensureDirSync(destDir);
-        setInstallStatus(`Downloading ${sel.tag_name}...`);
-
-        try {
-          const response = await fetch(sel.zipball_url);
-          if (!response.body) throw new Error('No response body');
-          const reader = response.body.getReader();
-          const cl = parseInt(response.headers.get('content-length') || '0');
-          const chunks: Uint8Array[] = [];
-          let received = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.length;
-            if (cl > 0) setInstallProgress(Math.round((received / cl) * 100));
-          }
-          const zipPath = path.join(destDir, 'blitcoder.zip');
-          fs.writeFileSync(zipPath, Buffer.concat(chunks));
-          setInstallStatus('Extracting...');
-          const extractDir = path.join(destDir, 'release');
-          fs.ensureDirSync(extractDir);
-          await new Promise<void>((resolve, reject) => {
-            const ps = spawn('powershell', ['-Command', `Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force`], { stdio: 'pipe' });
-            ps.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`Exit code ${code}`)));
-          });
-          fs.removeSync(zipPath);
-          setInstallProgress(100);
-          setInstallStatus(`${sel.tag_name} installed!`);
-          setPhase('done');
-        } catch (e: any) {
-          setInstallStatus(`Failed: ${e.message}`);
-          setError(e.message);
-        }
-      };
-      runInstall();
-    }, []);
-
     return (
       <Box flexDirection="column" paddingX={1} paddingTop={1}>
         <Text bold>Installing...</Text>
@@ -519,7 +520,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: (data: SetupData) => v
 
   const handleWelcomeChoice = useCallback((mode: 'now' | 'later') => {
     if (mode === 'later') {
-      setData(prev => ({ ...prev, ollama: 'system', workspace: 'sandboxed', aiProvider: 'skip', apiKey: '', defaultModel: 'None', truncation: 'skip', systemPrompt: null }));
+      setData(prev => ({ ...prev, ollama: 'existing', workspace: 'sandboxed', aiProvider: 'skip', apiKey: '', defaultModel: 'None', truncation: 'skip', systemPrompt: null }));
     }
     setStep(mode === 'now' ? 'ollama' : 'installation');
   }, []);
@@ -530,7 +531,8 @@ export const SetupWizard = ({ onComplete }: { onComplete: (data: SetupData) => v
         "System Prompt": data.systemPrompt || '',
         "AI Provider": data.aiProvider || 'skip',
         "API Key": data.apiKey || '',
-        "Ollama": data.ollama || 'existing',
+        "Ollama": data.ollama === 'minimal' ? 'minimal' : 'existing',
+        "Workspace Mode": data.workspace || 'sandboxed',
         "Default AI Model": data.defaultModel || 'None',
         "Dynamic Truncation": data.truncation === 'on+' ? 'ON+' : data.truncation === 'on' ? 'ON' : 'OFF',
       }, { spaces: 2 });

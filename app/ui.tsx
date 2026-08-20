@@ -10,10 +10,10 @@ import os from 'os';
 import { AIClient, getSystemPrompt } from './ai';
 import { HistoryManager } from './history';
 import type { ChatMessage } from './history';
-import { ToolHandler, tools } from '../features/tools';
+import { ToolHandler, tools, isDangerousTool } from '../features/tools';
 
-import { ensureOllama, killOllama } from "./ollama";
-import { SETTINGS_PATH, MEMORY_PATH, BIN_DIR, LOCAL_MODELS_PATH, GET_CHATS_DIR } from "./paths";
+import { ensureOllama, killOllama, normalizeOllamaMode } from "./ollama";
+import { SETTINGS_PATH, MEMORY_PATH, BIN_DIR, LOCAL_MODELS_PATH, GET_CHATS_DIR, getPluginInstallDir } from "./paths";
 import { spawn } from "child_process";
 import { PluginCreateMenu, PluginImportMenu, PluginFeaturedMenu } from "./plugin-ui";
 import { initPlugins, runPluginScripts, discoverPlugins, formatPluginList, formatScriptResults, loadAllPluginMods } from "./plugin-runner";
@@ -38,10 +38,9 @@ const getInitialSettings = () => {
   return null;
 };
 
-const child = spawn('title', ['blitCoder'], {
-  shell: true,
-  stdio: 'inherit'
-});
+if (process.platform === 'win32') {
+  spawn('title', ['blitCoder'], { shell: true, stdio: 'inherit' });
+}
 
 const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialMode = 'chat' }: AppProps) => {
   const initialSettings = React.useMemo(getInitialSettings, []);
@@ -52,7 +51,7 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
   const [isTyping, setIsTyping] = useState(false);
   const [currentModel, setCurrentModel] = useState(initialSettings?.['Default AI Model'] && initialSettings?.['Default AI Model'] !== 'None' ? initialSettings['Default AI Model'] : 'None');
   const [terminalSize, setTerminalSize] = useState({ columns: process.stdout.columns, rows: process.stdout.rows });
-  const [pendingAction, setPendingAction] = useState<{ toolCall: any, toolMsgs: ChatMessage[] } | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ toolCalls: any[], toolMsgs: ChatMessage[] } | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [workspace, setWorkspace] = useState<string | null>(initialWorkspace);
   const [showSettings, setShowSettings] = useState(false);
@@ -79,6 +78,13 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
   }, []);
 
   const aiClient = React.useMemo(() => {
+    let settings: Record<string, unknown> = initialSettings || {};
+    try {
+      if (fs.existsSync(SETTINGS_PATH)) {
+        settings = fs.readJsonSync(SETTINGS_PATH);
+      }
+    } catch (e) { /* use cached settings */ }
+
     const providerUrlMap: Record<string, string> = {
       openai: "https://api.openai.com/v1",
       gemini: "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -86,11 +92,11 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
       qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       ollama: "http://localhost:11434/v1",
     };
-    const provider = (initialSettings?.["AI Provider"] || "ollama") as string;
+    const provider = (settings["AI Provider"] || "ollama") as string;
     return new AIClient({
       model: currentModel,
       baseUrl: providerUrlMap[provider] || "http://localhost:11434/v1",
-      apiKey: initialSettings?.["API Key"] || undefined,
+      apiKey: (settings["API Key"] as string) || undefined,
     });
   }, [currentModel, initialSettings]);
 
@@ -362,12 +368,27 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
       return;
     }
 
-    // In a real app we'd save this to .blitcoder/local_models.json
-    // and maybe run `ollama create` or similar. For now, we mock the success.
+    let models: Record<string, string> = {};
+    try {
+      if (fs.existsSync(LOCAL_MODELS_PATH)) {
+        models = fs.readJsonSync(LOCAL_MODELS_PATH);
+      }
+    } catch (e) { /* start fresh */ }
+
     if (action === 'new' || action === 'edit') {
+      if (!ggufPath) {
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Usage: /localmodel <new|edit> <name> <path>' }]);
+        return;
+      }
+      models[name] = ggufPath;
+      await fs.outputJson(LOCAL_MODELS_PATH, models, { spaces: 2 });
       setMessages(prev => [...prev, { role: 'assistant', content: `Successfully ${action === 'new' ? 'added' : 'updated'} local model '${name}' at ${ggufPath}` }]);
     } else if (action === 'delete') {
+      delete models[name];
+      await fs.outputJson(LOCAL_MODELS_PATH, models, { spaces: 2 });
       setMessages(prev => [...prev, { role: 'assistant', content: `Successfully removed local model '${name}' from selection list.` }]);
+    } else {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Usage: /localmodel <new|edit|delete> <name> [path]' }]);
     }
   };
 
@@ -389,14 +410,14 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
 
     if (response.tool_calls) {
       const toolMsgs = [...currentMsgs, response as ChatMessage];
+      const dangerousCalls: any[] = [];
 
       for (const toolCall of (response.tool_calls as any[])) {
-        if (toolCall.function.name === 'run_command' || toolCall.function.name === 'delete_file') {
-          setPendingAction({ toolCall, toolMsgs });
-          return; // Wait for user input
+        if (isDangerousTool(toolCall.function.name)) {
+          dangerousCalls.push(toolCall);
+          continue;
         }
 
-        // Trigger onToolCall hook
         try {
           await PluginHookManager.getInstance().triggerToolCall(toolCall);
         } catch (e) {}
@@ -410,10 +431,15 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
           content: result
         });
 
-        const newLogs = toolHandler.getLogs();
-        newLogs.forEach(log => {
+        toolHandler.getLogs().forEach(log => {
           toolMsgs.push({ role: 'assistant', content: log, isLog: true });
         });
+      }
+
+      if (dangerousCalls.length > 0) {
+        setMessages(toolMsgs);
+        setPendingAction({ toolCalls: dangerousCalls, toolMsgs });
+        return;
       }
 
       setMessages(toolMsgs);
@@ -427,40 +453,46 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
   const confirmAction = async (approved: boolean) => {
     if (!pendingAction) return;
 
-    const { toolCall, toolMsgs } = pendingAction;
+    const { toolCalls, toolMsgs } = pendingAction;
+    const toolCall = toolCalls[0];
+    const remainingCalls = toolCalls.slice(1);
     setPendingAction(null);
 
+    let updatedToolMsgs = [...toolMsgs];
+
     if (approved) {
-      // Trigger onToolCall hook
       try {
         await PluginHookManager.getInstance().triggerToolCall(toolCall);
       } catch (e) {}
 
       const result = await toolHandler.execute(toolCall.function.name, JSON.parse(toolCall.function.arguments));
-      const updatedToolMsgs = [...toolMsgs, {
+      updatedToolMsgs.push({
         role: 'tool' as const,
         tool_call_id: toolCall.id,
         tool_name: toolCall.function.name,
         tool_args: toolCall.function.arguments,
         content: result
-      }];
-
-      const newLogs = toolHandler.getLogs();
-      newLogs.forEach(log => {
-        updatedToolMsgs.push({ role: 'assistant', content: log, isLog: true });
       });
 
-      setMessages(updatedToolMsgs);
-      await processAIResponse(updatedToolMsgs);
+      toolHandler.getLogs().forEach(log => {
+        updatedToolMsgs.push({ role: 'assistant', content: log, isLog: true });
+      });
     } else {
-      const updatedToolMsgs = [...toolMsgs, {
+      updatedToolMsgs.push({
         role: 'tool' as const,
         tool_call_id: toolCall.id,
         content: "User denied the action."
-      }];
-      setMessages(updatedToolMsgs);
-      await processAIResponse(updatedToolMsgs);
+      });
     }
+
+    if (remainingCalls.length > 0) {
+      setMessages(updatedToolMsgs);
+      setPendingAction({ toolCalls: remainingCalls, toolMsgs: updatedToolMsgs });
+      return;
+    }
+
+    setMessages(updatedToolMsgs);
+    await processAIResponse(updatedToolMsgs);
   };
 
   const FileViewer = ({ content, onExit }: { content: string, onExit: () => void }) => {
@@ -570,7 +602,7 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
   if (appMode === 'setup') {
     return (
       <SetupWizard onComplete={(setupData) => {
-        const settings: any = {
+        const settings: Record<string, unknown> = {
           "System Prompt": setupData.systemPrompt || getSystemPrompt(),
           "Keyboard Shortcuts": {
             "exit": "ctrl+c",
@@ -582,12 +614,22 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
           "AI Provider": setupData.aiProvider || 'skip',
           "API Key": setupData.apiKey || '',
           "Default AI Model": setupData.defaultModel || 'None',
-          "Ollama": setupData.ollama || 'existing',
+          "Ollama": setupData.ollama === 'minimal' ? 'minimal' : 'existing',
+          "Workspace Mode": setupData.workspace || 'sandboxed',
           "Dynamic Truncation": setupData.truncation === 'on+' ? 'ON+' : setupData.truncation === 'on' ? 'ON' : 'OFF',
         };
         try {
           fs.outputJsonSync(SETTINGS_PATH, settings, { spaces: 2 });
         } catch (e) {}
+        const wsMode = setupData.workspace || 'sandboxed';
+        if (wsMode === 'unsandboxed') {
+          setWorkspace(null);
+          toolHandler.setWorkspace(null);
+        } else {
+          const ws = initialWorkspace || process.cwd();
+          setWorkspace(ws);
+          toolHandler.setWorkspace(ws);
+        }
         setAppMode('chat');
       }} />
     );
@@ -727,8 +769,11 @@ const App = ({ initialWorkspace = null, initialPluginMode = null, mode: initialM
         {pendingAction && (
           <Box flexDirection="column" borderStyle="double" borderColor="yellow" padding={1}>
             <Text bold color="yellow">⚠️ DANGEROUS ACTION REQUESTED</Text>
-            <Text>Tool: {pendingAction.toolCall.function.name}</Text>
-            <Text>Args: {pendingAction.toolCall.function.arguments}</Text>
+            <Text>Tool: {pendingAction.toolCalls[0].function.name}</Text>
+            <Text>Args: {pendingAction.toolCalls[0].function.arguments}</Text>
+            {pendingAction.toolCalls.length > 1 && (
+              <Text color="gray">{pendingAction.toolCalls.length - 1} more dangerous action(s) queued</Text>
+            )}
             <Box marginTop={1}>
               <Text>Press <Text bold color="green">Y</Text> to approve or <Text bold color="red">N</Text> to deny.</Text>
             </Box>
@@ -757,14 +802,7 @@ const FEATURED_PLUGINS = [
 // Helper to query which plugins (featured and custom) are currently in the installation directory
 const getInstalledPluginKeys = (): string[] => {
   try {
-    let settings: any = {};
-    if (fs.existsSync(SETTINGS_PATH)) {
-      settings = fs.readJsonSync(SETTINGS_PATH);
-    }
-    let targetDir = path.join(process.cwd(), '.blitcoder', 'plugins');
-    if (settings["Plugin Install Location"] === "User folder") {
-      targetDir = path.join(os.homedir(), '.blitcoder', 'plugins');
-    }
+    const targetDir = getPluginInstallDir();
     if (fs.existsSync(targetDir)) {
       return fs.readdirSync(targetDir).filter(f => fs.statSync(path.join(targetDir, f)).isDirectory());
     }
@@ -782,12 +820,9 @@ const getCustomPlugins = (): { label: string; value: string; size: string; descr
     let desc = `# Custom Plugin: ${k}\nAn imported or custom-created BlitCoder plugin.`;
     let version = '1.0.0';
     try {
-      let settings: any = {};
+      let settings: Record<string, unknown> = {};
       if (fs.existsSync(SETTINGS_PATH)) settings = fs.readJsonSync(SETTINGS_PATH);
-      let targetDir = path.join(process.cwd(), '.blitcoder', 'plugins');
-      if (settings["Plugin Install Location"] === "User folder") {
-        targetDir = path.join(os.homedir(), '.blitcoder', 'plugins');
-      }
+      const targetDir = getPluginInstallDir();
       const configPath = path.join(targetDir, k, 'config.json');
       if (fs.existsSync(configPath)) {
         const raw = fs.readJsonSync(configPath);
@@ -1040,15 +1075,15 @@ const SettingsMenu = ({ onExit, terminalSize, injectedComponents = {}, onFeature
       setStatus(`Switching to ${item.value} Ollama...`);
 
       // 1. Save setting
-      let settings: any = {};
+      let settings: Record<string, unknown> = {};
       if (fs.existsSync(SETTINGS_PATH)) {
         try { settings = fs.readJsonSync(SETTINGS_PATH); } catch (e) { settings = {}; }
       }
+      const previousMode = normalizeOllamaMode(settings["Ollama"] as string);
       settings["Ollama"] = item.value;
       fs.outputJsonSync(SETTINGS_PATH, settings, { spaces: 2 });
 
-      // 2. Kill current Ollama
-      await killOllama();
+      await killOllama(previousMode === 'minimal' ? 'minimal' : undefined);
 
       // 3. Download binary if needed (ensureOllama handles it)
       if (item.value === 'minimal') {
@@ -1203,22 +1238,27 @@ const SettingsMenu = ({ onExit, terminalSize, injectedComponents = {}, onFeature
                     onSelect={(item) => {
                       if (item.value === 'y') {
                          try {
-                           const settings = fs.existsSync(SETTINGS_PATH) ? fs.readJsonSync(SETTINGS_PATH) : {};
-                           let targetDir = path.join(process.cwd(), '.blitcoder', 'plugins');
-                           if (settings["Plugin Install Location"] === "User folder") {
-                             targetDir = path.join(os.homedir(), '.blitcoder', 'plugins');
-                           }
+                           const targetDir = getPluginInstallDir();
                            fs.ensureDirSync(targetDir);
+                           const missing: string[] = [];
                            installingPlugins.install.forEach((k: string) => {
                              const src = path.join(process.cwd(), 'Plugins.examples', k);
                              const dest = path.join(targetDir, k);
-                             if (fs.existsSync(src)) fs.copySync(src, dest);
+                             if (fs.existsSync(src)) {
+                               fs.copySync(src, dest);
+                             } else {
+                               missing.push(k);
+                             }
                            });
                            installingPlugins.uninstall.forEach((k: string) => {
                              const dest = path.join(targetDir, k);
                              if (fs.existsSync(dest)) fs.removeSync(dest);
                            });
-                           setStatus(`Plugin settings sync completed successfully.`);
+                           if (missing.length > 0) {
+                             setStatus(`Sync completed with warnings: missing local sources for ${missing.join(', ')}. Use Featured Plugins to download.`);
+                           } else {
+                             setStatus('Plugin settings sync completed successfully.');
+                           }
                          } catch(err: any) {
                             setStatus(`Sync failed: ${(err as any)?.message || err}`);
                          }

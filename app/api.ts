@@ -2,16 +2,22 @@ import { AIClient } from "./ai";
 import { HistoryManager } from "./history";
 import { ToolHandler, tools } from "../features/tools";
 import fs from "fs-extra";
-import { SETTINGS_PATH } from "./paths";
+import os from "os";
+import { SETTINGS_PATH, GET_CHATS_DIR, resolveWorkspace } from "./paths";
 
-const history = new HistoryManager(process.cwd());
 const toolHandler = new ToolHandler();
 
+function getHistoryManager(): HistoryManager {
+  const cwd = process.cwd();
+  const workspace = resolveWorkspace(cwd, os.homedir());
+  const chatsDir = workspace ? GET_CHATS_DIR(workspace) : undefined;
+  return new HistoryManager(chatsDir);
+}
+
 export async function handleGUIChat(messages: any[]) {
-    // 1. Load settings
-    let settings: any = {};
+    let settings: Record<string, unknown> = {};
     if (fs.existsSync(SETTINGS_PATH)) {
-        try { settings = fs.readJsonSync(SETTINGS_PATH); } catch (e) {}
+        try { settings = fs.readJsonSync(SETTINGS_PATH); } catch (e) { /* ignore */ }
     }
 
     const providerUrlMap: Record<string, string> = {
@@ -23,10 +29,13 @@ export async function handleGUIChat(messages: any[]) {
     };
     const aiProvider = (settings["AI Provider"] || "ollama") as string;
     const aiClient = new AIClient({
-        model: settings["Default AI Model"] || "gpt-oss:20b-cloud",
+        model: (settings["Default AI Model"] as string) || "gpt-oss:20b-cloud",
         baseUrl: providerUrlMap[aiProvider] || "http://localhost:11434/v1",
-        apiKey: settings["API Key"] || undefined,
+        apiKey: (settings["API Key"] as string) || undefined,
     });
+
+    const workspace = resolveWorkspace(process.cwd(), require("os").homedir());
+    toolHandler.setWorkspace(workspace);
 
     let currentMessages = [...messages];
 
@@ -61,9 +70,9 @@ export async function handleGUIChat(messages: any[]) {
 }
 
 export async function getGUIHistory() {
-    return await history.listChats();
+    return await getHistoryManager().listChats();
 }
 
 export async function loadGUIChat(id: string) {
-    return await history.loadChat(id);
+    return await getHistoryManager().loadChat(id);
 }

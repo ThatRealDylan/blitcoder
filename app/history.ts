@@ -36,16 +36,25 @@ export class HistoryManager {
   async saveChat(messages: ChatMessage[], memory?: any) {
     const chatDir = path.join(this.baseDir, this.currentChatId);
     await fs.ensureDir(chatDir);
-    
+
+    const chatFile = path.join(chatDir, "chat.json");
+    let createdAt = new Date().toISOString();
+    if (await fs.pathExists(chatFile)) {
+      try {
+        const existing = await fs.readJson(chatFile);
+        if (existing.createdAt) createdAt = existing.createdAt;
+      } catch (e) { /* use new timestamp */ }
+    }
+
     const session: ChatSession = {
       id: this.currentChatId,
       messages,
-      createdAt: new Date().toISOString(),
+      createdAt,
       updatedAt: new Date().toISOString(),
     };
 
-    await fs.writeJson(path.join(chatDir, "chat.json"), session, { spaces: 2 });
-    
+    await fs.writeJson(chatFile, session, { spaces: 2 });
+
     if (memory) {
       await fs.writeJson(path.join(chatDir, "memory.json"), memory, { spaces: 2 });
     }
@@ -77,8 +86,8 @@ export class HistoryManager {
         const stats = await fs.stat(chatFile);
         const data = await fs.readJson(chatFile);
         const firstMsg = data.messages.find((m: any) => m.role === 'user')?.content || 'Empty Chat';
-        chats.push({ 
-          id: folder, 
+        chats.push({
+          id: folder,
           updatedAt: stats.mtime.toISOString(),
           title: firstMsg.substring(0, 30) + (firstMsg.length > 30 ? '...' : '')
         });

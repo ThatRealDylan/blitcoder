@@ -1,12 +1,13 @@
 import dotenv from "dotenv";
 dotenv.config();
-import os from "os";
-import { startTUI } from "./app/ui";
-import { ensureOllama } from "./app/ollama";
 
+import os from "os";
 import path from "path";
 import fs from "fs-extra";
-import { spawn } from 'child_process';
+import { startTUI } from "./app/ui";
+import { ensureOllama, normalizeOllamaMode } from "./app/ollama";
+import { SETTINGS_PATH, resolveWorkspace } from "./app/paths";
+import { startGUIServer } from "./app/gui-server";
 
 const args = process.argv.slice(2);
 const isASCII = args.includes("--ascii");
@@ -23,63 +24,51 @@ if (isASCII) {
   process.exit(0);
 }
 
-try {
-    const targetFile = 'gen.ts';
-    spawn('bun', ['run', targetFile]).unref();
-} catch (e) {
-    // gen.ts is a development relic; failures are non-critical
-}
-
-import { SETTINGS_PATH } from "./app/paths";
-
 const cwd = process.cwd();
 const homeDir = os.homedir();
-const isUnsandboxed = cwd.toLowerCase() === homeDir.toLowerCase();
+const initialWorkspace = resolveWorkspace(cwd, homeDir);
 
 let ollamaMode: "existing" | "minimal" = "existing";
 try {
-    if (fs.existsSync(SETTINGS_PATH)) {
-        const settings = fs.readJsonSync(SETTINGS_PATH);
-        ollamaMode = settings["Ollama"] || "existing";
-    }
-} catch (e) { }
-
-import { startGUIServer } from "./app/gui-server";
+  if (fs.existsSync(SETTINGS_PATH)) {
+    const settings = fs.readJsonSync(SETTINGS_PATH);
+    ollamaMode = normalizeOllamaMode(settings["Ollama"]);
+  }
+} catch (e) { /* ignore corrupt settings */ }
 
 const isGUI = args.includes("--gui");
 const isSetup = args[0] === "setup";
 
 if (isSetup) {
-    process.stdout.write('\x1b[?1049h');
-    startTUI(isUnsandboxed ? null : cwd, null, 'setup').then(() => {
+  process.stdout.write('\x1b[?1049h');
+  startTUI(initialWorkspace, null, 'setup').then(() => {
+    process.stdout.write('\x1b[?1049l Enjoy BlitCoder!');
+    process.exit(0);
+  });
+} else if (args[0] === "plugin") {
+  const pluginMode = args[1];
+  if (pluginMode === "create" || pluginMode === "import") {
+    startTUI(initialWorkspace, pluginMode).then(() => {
+      process.stdout.write('\x1b[?1049l Enjoy BlitCoder!');
+      process.exit(0);
+    });
+  } else {
+    console.log("Usage: blitcoder plugin <create|import>");
+    process.exit(1);
+  }
+} else {
+  ensureOllama(ollamaMode).then(async () => {
+    if (isGUI) {
+      await startGUIServer();
+      console.log("Press Ctrl+C to stop the GUI server.");
+    } else {
+      const needsSetup = !fs.existsSync(SETTINGS_PATH) && args[0] !== "plugin";
+      process.stdout.write('\x1b[?1049h');
+
+      startTUI(initialWorkspace, null, needsSetup ? 'setup' : undefined).then(() => {
         process.stdout.write('\x1b[?1049l Enjoy BlitCoder!');
         process.exit(0);
-    });
-} else if (args[0] === "plugin") {
-    const pluginMode = args[1];
-    if (pluginMode === "create" || pluginMode === "import") {
-        startTUI(isUnsandboxed ? null : cwd, pluginMode).then(() => {
-            process.stdout.write('\x1b[?1049l Enjoy BlitCoder!');
-            process.exit(0);
-        });
-    } else {
-        console.log("Usage: blitcoder plugin <create|import>");
-        process.exit(1);
+      });
     }
-} else {
-    ensureOllama(ollamaMode).then(async () => {
-        if (isGUI) {
-            await startGUIServer();
-            console.log("Press Ctrl+C to stop the GUI server.");
-        } else {
-            // First-launch detection: if no settings file, run setup wizard
-            const needsSetup = !fs.existsSync(SETTINGS_PATH) && args[0] !== "plugin";
-            process.stdout.write('\x1b[?1049h');
-
-            startTUI(isUnsandboxed ? null : cwd, null, needsSetup ? 'setup' : undefined).then(() => {
-                process.stdout.write('\x1b[?1049l Enjoy BlitCoder!');
-                process.exit(0);
-            });
-        }
-    });
+  });
 }

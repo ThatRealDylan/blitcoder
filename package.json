@@ -17,12 +17,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ThatRealDylan/blited.git"
+    "url": "https://github.com/ThatRealDylan/blitcoder.git"
   },
   "bugs": {
-    "url": "https://github.com/ThatRealDylan/blited/issues"
+    "url": "https://github.com/ThatRealDylan/blitcoder/issues"
   },
-  "homepage": "https://github.com/ThatRealDylan/blited#readme",
+  "homepage": "https://github.com/ThatRealDylan/blitcoder#readme",
   "keywords": [
     "ai",
     "coding",
