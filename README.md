@@ -1,5 +1,7 @@
 # BlitCoder
 
+> NOTICE: BlitCoder is being rewritten. Check [rewritten repo](https://github.com/ThatRealDylan/blitcoder-rewrite). BR will be archived/sunsetting as soon as BRW is in late development/mostly done.
+
 > dylan note: ts kinda rushed so lots of fixes later
 
 **BlitCoder** is a high-performance, developer-first AI coding assistant that brings the power of autonomous coding to both your terminal and your desktop. Built with **TypeScript** and **Bun**, it seamlessly bridges the gap between high-speed TUI efficiency and a premium GUI experience.
